@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Dự án
+*.md
+!README.md
+!CAI_DAT_LICH.md
+!huong_dan_telegram_bot.md
+!hosting_dam_may.md
+!co_che_van_hanh.md
+
+# Log & Dữ liệu
+Ban_tin_sang_*.md
+news_log/
