@@ -3,10 +3,13 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import sys
 import io
 import google.generativeai as genai
+import os
 
 # Đảm bảo in được tiếng Việt trên Terminal Windows
 if sys.stdout.encoding != 'utf-8':
@@ -36,13 +39,26 @@ ARTICLE_LIMIT = 5  # Đã tăng lên 5 bài mỗi lần quét
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- LOGIC LẤY TIN ---
+# --- LOGIC LẤY TIN VỚI CƠ CHẾ THỬ LẠI (RETRY) ---
 def fetch_news(source_key):
     source = NEWS_SOURCES.get(source_key)
     if not source: return "Không tìm thấy nguồn tin."
     
+    # Thiết lập cơ chế thử lại 3 lần nếu lỗi kết nối
+    session = requests.Session()
+    retry = Retry(connect=3, backoff_factor=1)
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    }
+    
     try:
-        response = requests.get(source['url'], headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        # Tăng timeout lên 20 giây để bù đắp độ trễ mạng
+        response = session.get(source['url'], headers=headers, timeout=20)
         soup = BeautifulSoup(response.content, 'xml')
         items = soup.find_all('item')[:ARTICLE_LIMIT] 
         
