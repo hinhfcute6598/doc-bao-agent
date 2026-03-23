@@ -10,6 +10,8 @@ import sys
 import io
 import google.generativeai as genai
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Đảm bảo in được tiếng Việt trên Terminal Windows
 if sys.stdout.encoding != 'utf-8':
@@ -144,12 +146,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.message.reply_text(text=message, parse_mode='Markdown')
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if "chào" in text or "đọc báo" in text:
-        await start(update, context)
+# --- RENDER HEALTH CHECK SERVER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_health_check():
+    port = int(os.environ.get("PORT", 8080))
+    server_address = ('', port)
+    httpd = HTTPServer(server_address, HealthCheckHandler)
+    print(f"Health check server running on port {port}...")
+    httpd.serve_forever()
 
 if __name__ == '__main__':
+    # Chạy Health Check Server trong một luồng riêng để không làm gián đoạn Bot
+    threading.Thread(target=run_health_check, daemon=True).start()
+    
     application = ApplicationBuilder().token(TOKEN).build()
     
     start_handler = CommandHandler('start', start)
