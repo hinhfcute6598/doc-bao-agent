@@ -69,16 +69,19 @@ def fetch_news(source_key):
             desc_raw = item.description.text if item.description else ""
             desc_soup = BeautifulSoup(desc_raw, 'html.parser')
             
-            # --- TÓM TẮT THÔNG MINH BẰNG GEMINI AI ---
+            full_text = desc_soup.get_text().strip()
+            
+            # --- TÓM TẮT THÔNG MINH BẰNG GEMINI AI (Nâng cấp bản 2.0) ---
             prompt = (
-                f"Hãy tóm tắt bài báo sau theo phong cách chuyên gia Marketing cho anh Hình.\n"
-                f"Tiêu đề: {title}\n"
-                f"Nội dung thô: {full_text}\n\n"
-                f"Yêu cầu:\n"
-                f"1. Giải thích tại sao tin này quan trọng (Why it matters).\n"
-                f"2. Gạch đầu dòng tóm tắt 3-4 ý chính (Key highlights).\n"
-                f"3. Dùng ngôn ngữ thực chiến, vắn tắt nhưng đủ ý.\n"
-                f"4. Trả lời bằng tiếng Việt."
+                f"Bạn là trợ lý tin tức chuyên sâu cho anh Hình (một chuyên gia Marketing).\n"
+                f"Hãy coi tiêu đề sau là một câu hỏi và dùng nội dung bài báo để giải đáp chi tiết:\n\n"
+                f"TIÊU ĐỀ: {title}\n"
+                f"NỘI DUNG GỐC: {full_text}\n\n"
+                f"YÊU CẦU BẢN TIN:\n"
+                f"1. GIẢI THÍCH: Trả lời câu hỏi ở Tiêu đề dựa trên các dẫn chứng cụ thể trong bài. Tại sao tin này lại quan trọng?\n"
+                f"2. ĐIỂM NHẤN (3-4 ý): Đưa ra các số liệu hoặc sự kiện then chốt để chứng minh.\n"
+                f"3. CƠ HỘI: Anh Hình có thể rút ra bài học hoặc cơ hội gì cho công việc Marketing/Kinh doanh?\n\n"
+                f"PHONG CÁCH: Chuyên nghiệp, sắc bén, không dài dòng nhưng phải đủ chiều sâu dẫn chứng. Trả lời bằng tiếng Việt."
             )
             
             try:
