@@ -148,7 +148,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
-    if "chào" in text or "đọc báo" in text:
+    # Mở rộng bộ lọc từ khóa theo thói quen của anh Hình
+    if any(word in text for word in ["chào", "đọc báo", "tin tức", "hi", "hello", "tiếp", "tin"]):
         await start(update, context)
 
 # --- RENDER HEALTH CHECK SERVER ---
@@ -181,4 +182,11 @@ if __name__ == '__main__':
     application.add_handler(text_handler)
     
     print("Bot đang chạy... Anh Hình hãy vào Telegram và nhấn Start nhé!")
-    application.run_polling()
+    
+    # Thêm cơ chế tự hồi sinh nếu gặp lỗi mạng hoặc xung đột
+    while True:
+        try:
+            application.run_polling(drop_pending_updates=True)
+        except Exception as e:
+            logging.error(f"Bot gặp sự cố và đang tự khởi động lại: {e}")
+            asyncio.sleep(5) # Đợi 5 giây rồi thử lại
