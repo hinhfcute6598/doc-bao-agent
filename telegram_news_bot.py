@@ -33,10 +33,6 @@ NEWS_SOURCES = {
     "vnexpress_gocnhin": {"name": "VnExpress - Góc nhìn", "url": "https://vnexpress.net/rss/goc-nhin.rss"},
     "vnexpress_kinhdoanh": {"name": "VnExpress - Kinh doanh", "url": "https://vnexpress.net/rss/kinh-doanh.rss"},
     "vnexpress_tech": {"name": "VnExpress - Số hóa", "url": "https://vnexpress.net/rss/so-hoa.rss"},
-    "brands_vn": {"name": "Brands Vietnam", "url": "https://www.brandsvietnam.com/rss"},
-    "vneconomy_kinhteso": {"name": "VnEconomy - Kinh tế số", "url": "https://vneconomy.vn/rss/kinh-te-so.htm"},
-    "vneconomy_chungkhoan": {"name": "VnEconomy - Chứng khoán", "url": "https://vneconomy.vn/rss/chung-khoan.htm"},
-    "vneconomy_thitruong": {"name": "VnEconomy - Thị trường", "url": "https://vneconomy.vn/rss/thi-truong.htm"}
 }
 
 ARTICLE_LIMIT = 5  # Đã tăng lên 5 bài mỗi lần quét
@@ -87,61 +83,77 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Hiện chưa có tin mới trong chuyên mục này ạ.")
             return
 
-        loop = asyncio.get_event_loop()
-        
-        # Hàm xử lý từng bài (Tách riêng để chạy executor)
-        def process_and_summarize(item):
+
+        # --- CHẠY TUẦN TỰ ĐỂ GỠ LỖI (DEBUG MODE) ---
+        for i, item in enumerate(items):
             title = item.title.text.strip()
             link = item.link.text.strip()
             desc_raw = item.description.text if item.description else ""
             
-            # Lấy nội dung chi tiết
+            await status_msg.edit_text(f"🔍 Đang gỡ lỗi bài {i+1}/{len(items)}:\n{title}")
+            
+            # 1. Thử lấy nội dung chi tiết
             full_text = ""
             try:
+                logging.info(f"Đang thử kết nối tới link: {link}")
                 art_res = requests.get(link, headers=headers, timeout=10)
+                logging.info(f"Kết quả HTTP: {art_res.status_code}, Độ dài trang: {len(art_res.content)}")
+                
                 art_soup = BeautifulSoup(art_res.content, 'html.parser')
-                for s in art_soup(['script', 'style', 'header', 'footer', 'nav']): s.extract()
-                paragraphs = art_soup.find_all('p')
-                full_text = "\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 30])
-                if len(full_text) < 200:
-                    full_text = BeautifulSoup(desc_raw, 'html.parser').get_text().strip()
-            except:
-                full_text = BeautifulSoup(desc_raw, 'html.parser').get_text().strip()
+                # Loại bỏ rác
+                for s in art_soup(['script', 'style', 'header', 'footer', 'nav', 'aside']): s.extract()
+                
+                # Cách lấy nội dung linh hoạt hơn: Lấy text từ các thẻ div/p có nhiều chữ
+                paragraphs = art_soup.find_all(['p', 'div'], recursive=True)
+                content_parts = []
+                for p in paragraphs:
+                    txt = p.get_text().strip()
+                    if len(txt) > 60: # Chỉ lấy các đoạn có độ dài đáng kể
+                        content_parts.append(txt)
+                
+                full_text = "\n".join(content_parts[:20]) # Lấy tối đa 20 đoạn đầu
+                logging.info(f"Đã trích xuất được {len(full_text)} ký tự văn bản.")
+                
+            except Exception as e:
+                logging.error(f"Lỗi khi cào trang gốc: {e}")
+            
+            # Nếu cào thất bại hoặc nội dung quá ngắn, dùng description từ RSS
+            if len(full_text) < 200:
+                logging.info("Nội dung chi tiết quá ngắn, chuyển sang dùng Description từ RSS.")
+                desc_soup = BeautifulSoup(desc_raw, 'html.parser')
+                full_text = desc_soup.get_text().strip()
 
-            # Tóm tắt AI
+            # 2. Gửi sang AI tóm tắt (Hybrid Prompt)
             prompt = (
-                f"Bạn là chuyên gia phân tích tin tức cao cấp cho trợ lý Marketing (Anh Hình).\n"
+                f"Bạn là chuyên gia phân tích tin tức cao cấp cho anh Hình (Marketing Expert).\n"
                 f"Tóm tắt bài báo theo cấu trúc LAI (Hỏi đáp + Kết luận + Dẫn chứng):\n\n"
                 f"TIÊU ĐỀ: {title}\n"
-                f"NỘI DUNG: {full_text[:3000]}\n"
+                f"NỘI DUNG: {full_text[:3500]}\n\n"
+                f"YÊU CẦU:\n"
+                f"1. PHẦN HỎI ĐÁP: Tiêu đề là câu hỏi, hãy giải đáp trực diện.\n"
+                f"2. KẾT LUẬN & DẪN CHỨNG: Đưa ra 1 kết luận chính và các số liệu chứng minh cụ thể.\n"
+                f"3. CƠ HỘI: Lời khuyên thực chiến cho anh Hình.\n"
+                f"Trả lời bằng tiếng Việt."
             )
+            
             try:
                 ai_response = model.generate_content(prompt)
                 highlights = ai_response.text
-            except:
-                highlights = "• Không thể tóm tắt bài viết này do lỗi AI."
+            except Exception as ai_err:
+                logging.error(f"Lỗi AI: {ai_err}")
+                highlights = f"• Lỗi tóm tắt AI: {ai_err}\n\nNội dung thô: {full_text[:300]}"
 
-            return {"title": title, "link": link, "highlights": highlights}
-
-        # CHẠY LẦN LƯỢT VÀ GỬI NGAY (STREAMING UX)
-        for i, item in enumerate(items):
-            # Cập nhật trạng thái cho anh Hình biết đang làm đến bài mấy
-            await status_msg.edit_text(f"🚀 Chuyên mục: {source_name}\nĐang xử lý bài {i+1}/{len(items)}... ⏳")
-            
-            # Chạy tóm tắt cho 1 bài
-            art = await loop.run_in_executor(None, process_and_summarize, item)
-            
-            # Gửi ngay bài đó cho anh Hình
+            # 3. Gửi tin nhắn ngay
             message = (
-                f"🗞 *{art['title']}*\n\n"
-                f"💡 *Ý chính:*\n"
-                f"{art['highlights']}\n\n"
-                f"🔗 [Đọc bài viết đầy đủ]({art['link']})\n"
+                f"🗞 *{title}*\n\n"
+                f"💡 *Phân tích chi tiết:*\n"
+                f"{highlights}\n\n"
+                f"🔗 [Đọc bài gốc]({link})\n"
                 f"-------------------"
             )
             await query.message.reply_text(text=message, parse_mode='Markdown')
             
-        await status_msg.edit_text(f"✅ Đã hoàn thành cập nhật {len(items)} bài viết từ {source_name}. Chúc anh Hình đọc tin vui vẻ!")
+        await status_msg.edit_text(f"✅ Hoàn tất gỡ lỗi {len(items)} bài từ {source_name}.")
 
     except Exception as e:
         logging.error(f"Lỗi: {e}")
