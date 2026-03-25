@@ -12,6 +12,7 @@ import google.generativeai as genai
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Đảm bảo in được tiếng Việt trên Terminal Windows
@@ -42,92 +43,7 @@ ARTICLE_LIMIT = 5  # Đã tăng lên 5 bài mỗi lần quét
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- LOGIC LẤY TIN VỚI CƠ CHẾ THỬ LẠI (RETRY) ---
-def fetch_news(source_key):
-    source = NEWS_SOURCES.get(source_key)
-    if not source: return "Không tìm thấy nguồn tin."
-    
-    # Thiết lập cơ chế thử lại 3 lần nếu lỗi kết nối
-    session = requests.Session()
-    retry = Retry(connect=3, backoff_factor=1)
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount('https://', adapter)
-    session.mount('http://', adapter)
-
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    }
-    
-    try:
-        logging.info(f"--- BẮT ĐẦU QUÉT TIN: {source_name} ---")
-        # Tăng timeout lên 20 giây để bù đắp độ trễ mạng
-        response = session.get(source['url'], headers=headers, timeout=20)
-        soup = BeautifulSoup(response.content, 'xml')
-        items = soup.find_all('item')[:ARTICLE_LIMIT] 
-        
-        logging.info(f"Tìm thấy {len(items)} bài mới. Đang bắt đầu tóm tắt bằng Gemini AI...")
-        
-        results = []
-        for item in items:
-            title = item.title.text.strip()
-            link = item.link.text.strip()
-            desc_raw = item.description.text if item.description else ""
-            
-            # --- LẤY NỘI DUNG CHI TIẾT TỪ TRANG GỐC (Fix lỗi thiếu nội dung) ---
-            full_text = ""
-            try:
-                # Thử lấy nội dung từ link gốc để AI có đủ dữ liệu tóm tắt
-                art_res = session.get(link, headers=headers, timeout=10)
-                art_soup = BeautifulSoup(art_res.content, 'html.parser')
-                
-                # Loại bỏ các thành phần rác
-                for s in art_soup(['script', 'style', 'header', 'footer', 'nav']): s.extract()
-                
-                # Lấy các đoạn văn bản chính (Thường nằm trong thẻ p)
-                paragraphs = art_soup.find_all('p')
-                full_text = "\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 30])
-                
-                # Nếu không lấy được nội dung chi tiết, dùng tạm description từ RSS
-                if len(full_text) < 200:
-                    desc_soup = BeautifulSoup(desc_raw, 'html.parser')
-                    full_text = desc_soup.get_text().strip()
-            except:
-                desc_soup = BeautifulSoup(desc_raw, 'html.parser')
-                full_text = desc_soup.get_text().strip()
-            
-            # --- TÓM TẮT THÔNG MINH LAI (PHƯƠNG ÁN 1 + 2) ---
-            prompt = (
-                f"Bạn là chuyên gia phân tích tin tức cao cấp cho anh Hình (Marketing Expert).\n"
-                f"Hãy tóm tắt bài báo sau theo cấu trúc LAI tối ưu:\n\n"
-                f"TIÊU ĐỀ: {title}\n"
-                f"NỘI DUNG: {full_text[:3000]}\n\n" # Giới hạn 3000 ký tự để tránh quá tải AI
-                f"YÊU CẦU CẤU TRÚC:\n"
-                f"1. PHẦN HỎI ĐÁP (Q&A): Coi Tiêu đề là một câu hỏi. Hãy đưa ra câu trả lời trực diện và lý do tại sao tin này quan trọng.\n"
-                f"2. KẾT LUẬN CHÍNH: Rút ra thông điệp cốt lõi nhất của bài báo trong 1-2 câu.\n"
-                f"3. DẪN CHỨNG CHỨNG MINH: Liệt kê 3-4 luận điểm kèm số liệu/sự kiện cụ thể trong bài để chứng minh cho kết luận trên.\n"
-                f"4. CƠ HỘI MARKETING: Lời khuyên thực chiến cho anh Hình.\n\n"
-                f"PHONG CÁCH: Sắc bén, chuyên nghiệp, ngôn ngữ thực chiến. Trả lời bằng tiếng Việt."
-            )
-            
-            try:
-                ai_response = model.generate_content(prompt)
-                highlights = ai_response.text
-            except:
-                # Nếu AI lỗi thì dùng cách cũ (fallback)
-                sentences = [s.strip() for s in full_text.split('.') if len(s.strip()) > 10]
-                highlights = "\n".join([f"• {s}" for s in sentences[:3]])
-            
-            results.append({
-                "title": title,
-                "link": link,
-                "highlights": highlights
-            })
-        logging.info(f"--- TỔNG HỢP XONG: {source_name} ---")
-        return results
-    except Exception as e:
-        logging.error(f"Lỗi trong quá trình lấy tin: {e}")
-        return f"Lỗi khi lấy tin từ {source_name}: {e}"
+# --- LOGIC LẤY TIN VÀ TÓM TẮT ĐÃ ĐƯỢC TỐI ƯU VÀO HANDLER ĐỂ CÓ TRẢI NGHIỆM REAL-TIME ---
 
 # --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -153,26 +69,83 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     source_key = query.data
     source_name = NEWS_SOURCES[source_key]['name']
-    await query.edit_message_text(text=f"Đang quét tin từ {source_name}...\n(Quá trình tóm tắt AI có thể mất 15-20 giây, anh đợi em chút nhé!)")
+    status_msg = await query.edit_message_text(text=f"🚀 Bắt đầu quét tin từ {source_name}...\nEm sẽ gửi từng bài ngay khi tóm tắt xong nhé!")
     
-    # CHẠY TÁC VỤ NẶNG TRONG LUỒNG RIÊNG (Không gây nghẽn Bot)
-    loop = asyncio.get_event_loop()
-    news_list = await loop.run_in_executor(None, fetch_news, source_key)
+    # Lấy danh sách RSS (Nhanh)
+    source = NEWS_SOURCES.get(source_key)
+    session = requests.Session()
+    session.mount('https://', HTTPAdapter(max_retries=Retry(connect=3, backoff_factor=1)))
     
-    if isinstance(news_list, str):
-        await query.message.reply_text(news_list)
-        return
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    
+    try:
+        response = session.get(source['url'], headers=headers, timeout=15)
+        soup = BeautifulSoup(response.content, 'xml')
+        items = soup.find_all('item')[:ARTICLE_LIMIT]
+        
+        if not items:
+            await query.message.reply_text("Hiện chưa có tin mới trong chuyên mục này ạ.")
+            return
 
-    for art in news_list:
-        # Định dạng HIGHLIGHT cho anh Hình (Lướt 1 phút)
-        message = (
-            f"🗞 *{art['title']}*\n\n"
-            f"💡 *Ý chính:*\n"
-            f"{art['highlights']}\n\n"
-            f"🔗 [Đọc bài viết đầy đủ]({art['link']})\n"
-            f"-------------------"
-        )
-        await query.message.reply_text(text=message, parse_mode='Markdown')
+        loop = asyncio.get_event_loop()
+        
+        # Hàm xử lý từng bài (Tách riêng để chạy executor)
+        def process_and_summarize(item):
+            title = item.title.text.strip()
+            link = item.link.text.strip()
+            desc_raw = item.description.text if item.description else ""
+            
+            # Lấy nội dung chi tiết
+            full_text = ""
+            try:
+                art_res = requests.get(link, headers=headers, timeout=10)
+                art_soup = BeautifulSoup(art_res.content, 'html.parser')
+                for s in art_soup(['script', 'style', 'header', 'footer', 'nav']): s.extract()
+                paragraphs = art_soup.find_all('p')
+                full_text = "\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 30])
+                if len(full_text) < 200:
+                    full_text = BeautifulSoup(desc_raw, 'html.parser').get_text().strip()
+            except:
+                full_text = BeautifulSoup(desc_raw, 'html.parser').get_text().strip()
+
+            # Tóm tắt AI
+            prompt = (
+                f"Bạn là chuyên gia phân tích tin tức cao cấp cho trợ lý Marketing (Anh Hình).\n"
+                f"Tóm tắt bài báo theo cấu trúc LAI (Hỏi đáp + Kết luận + Dẫn chứng):\n\n"
+                f"TIÊU ĐỀ: {title}\n"
+                f"NỘI DUNG: {full_text[:3000]}\n"
+            )
+            try:
+                ai_response = model.generate_content(prompt)
+                highlights = ai_response.text
+            except:
+                highlights = "• Không thể tóm tắt bài viết này do lỗi AI."
+
+            return {"title": title, "link": link, "highlights": highlights}
+
+        # CHẠY LẦN LƯỢT VÀ GỬI NGAY (STREAMING UX)
+        for i, item in enumerate(items):
+            # Cập nhật trạng thái cho anh Hình biết đang làm đến bài mấy
+            await status_msg.edit_text(f"🚀 Chuyên mục: {source_name}\nĐang xử lý bài {i+1}/{len(items)}... ⏳")
+            
+            # Chạy tóm tắt cho 1 bài
+            art = await loop.run_in_executor(None, process_and_summarize, item)
+            
+            # Gửi ngay bài đó cho anh Hình
+            message = (
+                f"🗞 *{art['title']}*\n\n"
+                f"💡 *Ý chính:*\n"
+                f"{art['highlights']}\n\n"
+                f"🔗 [Đọc bài viết đầy đủ]({art['link']})\n"
+                f"-------------------"
+            )
+            await query.message.reply_text(text=message, parse_mode='Markdown')
+            
+        await status_msg.edit_text(f"✅ Đã hoàn thành cập nhật {len(items)} bài viết từ {source_name}. Chúc anh Hình đọc tin vui vẻ!")
+
+    except Exception as e:
+        logging.error(f"Lỗi: {e}")
+        await query.message.reply_text(f"Lỗi: {e}")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
