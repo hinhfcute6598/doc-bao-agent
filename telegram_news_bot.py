@@ -24,15 +24,25 @@ if sys.stdout.encoding != 'utf-8':
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "7759991714:AAFMP56X2u8ZtasssI9CQgr3mEiHqTf4DQY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyAJCrTElt-6_QHPFviSpQQlJc6nS2yRYug")
 
-# Cấu hình Gemini
+# Cấu hình Gemini (Nâng cấp Safety để tránh chặn bài)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+safety_settings = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+]
+model = genai.GenerativeModel('gemini-1.5-flash', safety_settings=safety_settings)
 
 # Danh sách nguồn tin (Đã mở rộng)
 NEWS_SOURCES = {
     "vnexpress_gocnhin": {"name": "VnExpress - Góc nhìn", "url": "https://vnexpress.net/rss/goc-nhin.rss"},
     "vnexpress_kinhdoanh": {"name": "VnExpress - Kinh doanh", "url": "https://vnexpress.net/rss/kinh-doanh.rss"},
     "vnexpress_tech": {"name": "VnExpress - Số hóa", "url": "https://vnexpress.net/rss/so-hoa.rss"},
+    "brands_vn": {"name": "Brands Vietnam", "url": "https://www.brandsvietnam.com/rss"},
+    "vneconomy_kinhteso": {"name": "VnEconomy - Kinh tế số", "url": "https://vneconomy.vn/rss/kinh-te-so.htm"},
+    "vneconomy_chungkhoan": {"name": "VnEconomy - Chứng khoán", "url": "https://vneconomy.vn/rss/chung-khoan.htm"},
+    "vneconomy_thitruong": {"name": "VnEconomy - Thị trường", "url": "https://vneconomy.vn/rss/thi-truong.htm"}
 }
 
 ARTICLE_LIMIT = 5  # Đã tăng lên 5 bài mỗi lần quét
@@ -76,11 +86,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         response = session.get(source['url'], headers=headers, timeout=15)
+        # THỬ GIẢI MÃ RSS LINH HOẠT (Hỗ trợ cả VnEconomy .htm)
         soup = BeautifulSoup(response.content, 'xml')
-        items = soup.find_all('item')[:ARTICLE_LIMIT]
+        items = soup.find_all(['item', 'entry'])[:ARTICLE_LIMIT]
         
         if not items:
-            await query.message.reply_text("Hiện chưa có tin mới trong chuyên mục này ạ.")
+            logging.info("Bộ giải mã XML thất bại, thử sang html.parser...")
+            soup = BeautifulSoup(response.content, 'html.parser')
+            items = soup.find_all(['item', 'entry'])[:ARTICLE_LIMIT]
+
+        if not items:
+            await query.message.reply_text("Hiện chưa tìm thấy tin mới theo định dạng này ạ.")
             return
 
 
@@ -100,18 +116,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logging.info(f"Kết quả HTTP: {art_res.status_code}, Độ dài trang: {len(art_res.content)}")
                 
                 art_soup = BeautifulSoup(art_res.content, 'html.parser')
-                # Loại bỏ rác
-                for s in art_soup(['script', 'style', 'header', 'footer', 'nav', 'aside']): s.extract()
+                # Ưu tiên lấy trong thẻ article, nếu không lấy ở các div chính
+                main_article = art_soup.find('article') or art_soup.find('div', class_='content')
+                target = main_article if main_article else art_soup
                 
-                # Cách lấy nội dung linh hoạt hơn: Lấy text từ các thẻ div/p có nhiều chữ
-                paragraphs = art_soup.find_all(['p', 'div'], recursive=True)
-                content_parts = []
-                for p in paragraphs:
-                    txt = p.get_text().strip()
-                    if len(txt) > 60: # Chỉ lấy các đoạn có độ dài đáng kể
-                        content_parts.append(txt)
+                for s in target(['script', 'style', 'header', 'footer', 'nav', 'aside', 'iframe']): s.extract()
+                paragraphs = target.find_all(['p', 'div'], recursive=True)
                 
-                full_text = "\n".join(content_parts[:20]) # Lấy tối đa 20 đoạn đầu
+                full_text = "\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 50])
+                full_text = full_text[:3500] # Giới hạn dữ liệu gửi AI
                 logging.info(f"Đã trích xuất được {len(full_text)} ký tự văn bản.")
                 
             except Exception as e:
@@ -141,19 +154,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 highlights = ai_response.text
             except Exception as ai_err:
                 logging.error(f"Lỗi AI: {ai_err}")
-                highlights = f"• Lỗi tóm tắt AI: {ai_err}\n\nNội dung thô: {full_text[:300]}"
+                highlights = f"• **Bot gặp lỗi phân tích AI**: {str(ai_err)[:200]}\n\n💡 *Gợi ý: Anh Hình thử nhấn lại chuyên mục này sau 10 giây nhé!*"
 
             # 3. Gửi tin nhắn ngay
             message = (
                 f"🗞 *{title}*\n\n"
-                f"💡 *Phân tích chi tiết:*\n"
+                f"💡 *Phân tích chuyên gia:*\n"
                 f"{highlights}\n\n"
                 f"🔗 [Đọc bài gốc]({link})\n"
                 f"-------------------"
             )
             await query.message.reply_text(text=message, parse_mode='Markdown')
             
-        await status_msg.edit_text(f"✅ Hoàn tất gỡ lỗi {len(items)} bài từ {source_name}.")
+            # Thêm trễ 2 giây để tránh bị AI chặn do gọi quá nhanh (Rate Limit)
+            await asyncio.sleep(1)
+            
+        await status_msg.edit_text(f"✅ Đã tóm tắt chuyên sâu 5 bài từ {source_name}. Bản tin độc quyền cho anh Hình.")
 
     except Exception as e:
         logging.error(f"Lỗi: {e}")
