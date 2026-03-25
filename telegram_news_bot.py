@@ -73,21 +73,41 @@ def fetch_news(source_key):
             title = item.title.text.strip()
             link = item.link.text.strip()
             desc_raw = item.description.text if item.description else ""
-            desc_soup = BeautifulSoup(desc_raw, 'html.parser')
             
-            full_text = desc_soup.get_text().strip()
+            # --- LẤY NỘI DUNG CHI TIẾT TỪ TRANG GỐC (Fix lỗi thiếu nội dung) ---
+            full_text = ""
+            try:
+                # Thử lấy nội dung từ link gốc để AI có đủ dữ liệu tóm tắt
+                art_res = session.get(link, headers=headers, timeout=10)
+                art_soup = BeautifulSoup(art_res.content, 'html.parser')
+                
+                # Loại bỏ các thành phần rác
+                for s in art_soup(['script', 'style', 'header', 'footer', 'nav']): s.extract()
+                
+                # Lấy các đoạn văn bản chính (Thường nằm trong thẻ p)
+                paragraphs = art_soup.find_all('p')
+                full_text = "\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 30])
+                
+                # Nếu không lấy được nội dung chi tiết, dùng tạm description từ RSS
+                if len(full_text) < 200:
+                    desc_soup = BeautifulSoup(desc_raw, 'html.parser')
+                    full_text = desc_soup.get_text().strip()
+            except:
+                desc_soup = BeautifulSoup(desc_raw, 'html.parser')
+                full_text = desc_soup.get_text().strip()
             
-            # --- TÓM TẮT THÔNG MINH BẰNG GEMINI AI (Nâng cấp bản 2.0) ---
+            # --- TÓM TẮT THÔNG MINH LAI (PHƯƠNG ÁN 1 + 2) ---
             prompt = (
-                f"Bạn là trợ lý tin tức chuyên sâu cho anh Hình (một chuyên gia Marketing).\n"
-                f"Hãy coi tiêu đề sau là một câu hỏi và dùng nội dung bài báo để giải đáp chi tiết:\n\n"
+                f"Bạn là chuyên gia phân tích tin tức cao cấp cho anh Hình (Marketing Expert).\n"
+                f"Hãy tóm tắt bài báo sau theo cấu trúc LAI tối ưu:\n\n"
                 f"TIÊU ĐỀ: {title}\n"
-                f"NỘI DUNG GỐC: {full_text}\n\n"
-                f"YÊU CẦU BẢN TIN:\n"
-                f"1. GIẢI THÍCH: Trả lời câu hỏi ở Tiêu đề dựa trên các dẫn chứng cụ thể trong bài. Tại sao tin này lại quan trọng?\n"
-                f"2. ĐIỂM NHẤN (3-4 ý): Đưa ra các số liệu hoặc sự kiện then chốt để chứng minh.\n"
-                f"3. CƠ HỘI: Anh Hình có thể rút ra bài học hoặc cơ hội gì cho công việc Marketing/Kinh doanh?\n\n"
-                f"PHONG CÁCH: Chuyên nghiệp, sắc bén, không dài dòng nhưng phải đủ chiều sâu dẫn chứng. Trả lời bằng tiếng Việt."
+                f"NỘI DUNG: {full_text[:3000]}\n\n" # Giới hạn 3000 ký tự để tránh quá tải AI
+                f"YÊU CẦU CẤU TRÚC:\n"
+                f"1. PHẦN HỎI ĐÁP (Q&A): Coi Tiêu đề là một câu hỏi. Hãy đưa ra câu trả lời trực diện và lý do tại sao tin này quan trọng.\n"
+                f"2. KẾT LUẬN CHÍNH: Rút ra thông điệp cốt lõi nhất của bài báo trong 1-2 câu.\n"
+                f"3. DẪN CHỨNG CHỨNG MINH: Liệt kê 3-4 luận điểm kèm số liệu/sự kiện cụ thể trong bài để chứng minh cho kết luận trên.\n"
+                f"4. CƠ HỘI MARKETING: Lời khuyên thực chiến cho anh Hình.\n\n"
+                f"PHONG CÁCH: Sắc bén, chuyên nghiệp, ngôn ngữ thực chiến. Trả lời bằng tiếng Việt."
             )
             
             try:
