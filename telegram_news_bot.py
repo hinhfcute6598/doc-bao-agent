@@ -212,11 +212,8 @@ if __name__ == '__main__':
     
     print("Bot đang chạy... Anh Hình hãy vào Telegram và nhấn Start nhé!")
     
-    # Thêm cơ chế tự hồi sinh nếu gặp lỗi mạng hoặc xung đột
-    while True:
-        try:
-            print("Hệ thống Polling bắt đầu hoạt động...")
-            application.run_polling(drop_pending_updates=True)
-        except Exception as e:
-            logging.error(f"Bot gặp sự cố và đang tự khởi động lại: {e}")
-            time.sleep(5) # Đợi 5 giây rồi thử lại (Dùng time.sleep chuẩn cho block __main__)
+    print("Bot đang chạy... Anh Hình hãy vào Telegram và nhấn Start nhé!")
+    
+    # Để Render tự quản lý việc khởi động lại (Restart) nếu có lỗi. 
+    # Việc dùng vòng lặp while thủ công đang gây xung đột vòng lặp sự kiện (Event loop).
+    application.run_polling(drop_pending_updates=True)
