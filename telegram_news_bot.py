@@ -24,7 +24,7 @@ if sys.stdout.encoding != 'utf-8':
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "7759991714:AAFMP56X2u8ZtasssI9CQgr3mEiHqTf4DQY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyAJCrTElt-6_QHPFviSpQQlJc6nS2yRYug")
 
-# Cấu hình Gemini (Nâng cấp Safety để tránh chặn bài)
+# Cấu hình Gemini (Nâng cấp Model-latest để tránh lỗi 404)
 genai.configure(api_key=GEMINI_API_KEY)
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -32,7 +32,7 @@ safety_settings = [
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
-model = genai.GenerativeModel('gemini-1.5-flash', safety_settings=safety_settings)
+model = genai.GenerativeModel('gemini-1.5-flash-latest', safety_settings=safety_settings)
 
 # Danh sách nguồn tin (Đã mở rộng)
 NEWS_SOURCES = {
@@ -40,9 +40,9 @@ NEWS_SOURCES = {
     "vnexpress_kinhdoanh": {"name": "VnExpress - Kinh doanh", "url": "https://vnexpress.net/rss/kinh-doanh.rss"},
     "vnexpress_tech": {"name": "VnExpress - Số hóa", "url": "https://vnexpress.net/rss/so-hoa.rss"},
     "brands_vn": {"name": "Brands Vietnam", "url": "https://www.brandsvietnam.com/rss"},
-    "vneconomy_kinhteso": {"name": "VnEconomy - Kinh tế số", "url": "https://vneconomy.vn/rss/kinh-te-so.htm"},
-    "vneconomy_chungkhoan": {"name": "VnEconomy - Chứng khoán", "url": "https://vneconomy.vn/rss/chung-khoan.htm"},
-    "vneconomy_thitruong": {"name": "VnEconomy - Thị trường", "url": "https://vneconomy.vn/rss/thi-truong.htm"}
+    "vneconomy_kinhteso": {"name": "VnEconomy - Kinh tế số", "url": "https://vneconomy.vn/kinh-te-so.rss"},
+    "vneconomy_chungkhoan": {"name": "VnEconomy - Chứng khoán", "url": "https://vneconomy.vn/chung-khoan.rss"},
+    "vneconomy_thitruong": {"name": "VnEconomy - Thị trường", "url": "https://vneconomy.vn/thi-truong.rss"}
 }
 
 ARTICLE_LIMIT = 5  # Đã tăng lên 5 bài mỗi lần quét
@@ -158,7 +158,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # 3. Gửi tin nhắn ngay
             message = (
-                f"🗞 *{title}*\n\n"
+                f"🗞 *{title}*\n"
+                f"🌐 Nguồn: {source_name}\n\n"
                 f"💡 *Phân tích chuyên gia:*\n"
                 f"{highlights}\n\n"
                 f"🔗 [Đọc bài gốc]({link})\n"
