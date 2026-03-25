@@ -11,6 +11,7 @@ import io
 import google.generativeai as genai
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Đảm bảo in được tiếng Việt trên Terminal Windows
@@ -59,10 +60,13 @@ def fetch_news(source_key):
     }
     
     try:
+        logging.info(f"--- BẮT ĐẦU QUÉT TIN: {source_name} ---")
         # Tăng timeout lên 20 giây để bù đắp độ trễ mạng
         response = session.get(source['url'], headers=headers, timeout=20)
         soup = BeautifulSoup(response.content, 'xml')
         items = soup.find_all('item')[:ARTICLE_LIMIT] 
+        
+        logging.info(f"Tìm thấy {len(items)} bài mới. Đang bắt đầu tóm tắt bằng Gemini AI...")
         
         results = []
         for item in items:
@@ -99,9 +103,11 @@ def fetch_news(source_key):
                 "link": link,
                 "highlights": highlights
             })
+        logging.info(f"--- TỔNG HỢP XONG: {source_name} ---")
         return results
     except Exception as e:
-        return f"Lỗi khi lấy tin: {e}"
+        logging.error(f"Lỗi trong quá trình lấy tin: {e}")
+        return f"Lỗi khi lấy tin từ {source_name}: {e}"
 
 # --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,9 +133,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     source_key = query.data
     source_name = NEWS_SOURCES[source_key]['name']
-    await query.edit_message_text(text=f"Đang quét tin từ {source_name}...")
+    await query.edit_message_text(text=f"Đang quét tin từ {source_name}...\n(Quá trình tóm tắt AI có thể mất 15-20 giây, anh đợi em chút nhé!)")
     
-    news_list = fetch_news(source_key)
+    # CHẠY TÁC VỤ NẶNG TRONG LUỒNG RIÊNG (Không gây nghẽn Bot)
+    loop = asyncio.get_event_loop()
+    news_list = await loop.run_in_executor(None, fetch_news, source_key)
     
     if isinstance(news_list, str):
         await query.message.reply_text(news_list)
@@ -186,7 +194,8 @@ if __name__ == '__main__':
     # Thêm cơ chế tự hồi sinh nếu gặp lỗi mạng hoặc xung đột
     while True:
         try:
+            print("Hệ thống Polling bắt đầu hoạt động...")
             application.run_polling(drop_pending_updates=True)
         except Exception as e:
             logging.error(f"Bot gặp sự cố và đang tự khởi động lại: {e}")
-            asyncio.sleep(5) # Đợi 5 giây rồi thử lại
+            time.sleep(5) # Đợi 5 giây rồi thử lại (Dùng time.sleep chuẩn cho block __main__)
